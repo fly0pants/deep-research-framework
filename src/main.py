@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from src.config import get_settings
 from src.api.routes import router, init_router
 from src.engine.project_loader import ProjectLoader
+from src.memory.store import UserMemoryStore
 from src.task.manager import TaskManager
 
 try:
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
         )
 
     task_manager = TaskManager(db_path=str(settings.storage_path / "tasks.db"))
+    memory_store = UserMemoryStore(db_path=str(settings.storage_path / "tasks.db"))
     project_loader = ProjectLoader(settings.projects_path)
     semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
 
@@ -36,8 +38,10 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         await task_manager.init()
-        init_router(task_manager, project_loader, semaphore)
+        await memory_store.init()
+        init_router(task_manager, project_loader, semaphore, memory_store)
         yield
+        await memory_store.close()
         await task_manager.close()
 
     app = FastAPI(

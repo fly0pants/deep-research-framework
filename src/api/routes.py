@@ -17,6 +17,7 @@ from src.api.models import (
 )
 from src.config import get_settings
 from src.engine.project_loader import ProjectLoader
+from src.memory.store import UserMemoryStore
 from src.task.manager import TaskManager
 
 try:
@@ -34,13 +35,23 @@ router = APIRouter()
 task_manager: TaskManager | None = None
 project_loader: ProjectLoader | None = None
 semaphore: asyncio.Semaphore | None = None
+memory_store: UserMemoryStore | None = None
 
 
-def init_router(tm: TaskManager, pl: ProjectLoader, sem: asyncio.Semaphore):
-    global task_manager, project_loader, semaphore
+def init_router(tm: TaskManager, pl: ProjectLoader, sem: asyncio.Semaphore, ms: UserMemoryStore):
+    global task_manager, project_loader, semaphore, memory_store
     task_manager = tm
     project_loader = pl
     semaphore = sem
+    memory_store = ms
+
+
+def _hash_api_key(api_key: str | None) -> str | None:
+    """Derive a stable, non-reversible user_id from API key."""
+    if not api_key:
+        return None
+    import hashlib
+    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -240,6 +251,14 @@ async def run_research_task(task_id: str, req: ResearchRequest):
         config = project_loader.load(req.project)
         output_prefs = project_loader.load_output_prefs(req.project)
 
+        # Lookup user memory
+        user_memory = None
+        user_id = _hash_api_key(req.api_key)
+        if user_id:
+            mem_record = await memory_store.get(user_id)
+            if mem_record:
+                user_memory = mem_record["memory"]
+
         client_kwargs = {"api_key": settings.openai_api_key}
         if settings.openai_base_url:
             client_kwargs["base_url"] = settings.openai_base_url
@@ -278,6 +297,7 @@ async def run_research_task(task_id: str, req: ResearchRequest):
             project_config=config,
             context=req.context,
             output_prefs=output_prefs,
+            user_memory=user_memory,
         )
 
         await task_manager.update_status(
@@ -347,6 +367,23 @@ async def run_research_task(task_id: str, req: ResearchRequest):
             "research_time_seconds": round(elapsed, 1),
         }
         await task_manager.complete(task_id, result_data, usage_data)
+
+        # Async memory update (fire-and-forget, errors won't affect task)
+        if user_id:
+            try:
+                from src.memory.updater import MemoryUpdater
+                updater = MemoryUpdater(openai_client=openai_client)
+                memory_summary = summary or result["output_text"][:500]
+                updated_memory = await updater.generate_updated_memory(
+                    query=req.query,
+                    summary=memory_summary,
+                    existing_memory=user_memory,
+                )
+                if updated_memory:
+                    await memory_store.upsert(user_id, updated_memory)
+                    logger.info("user_memory_updated", user_id=user_id)
+            except Exception as e:
+                logger.warning("user_memory_update_failed", user_id=user_id, error=str(e))
 
         if req.callback_url:
             await _send_callback(req.callback_url, task_id, result_data)
