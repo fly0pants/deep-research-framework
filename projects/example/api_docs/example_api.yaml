@@ -1,0 +1,13 @@
+openapi: "3.0.0"
+info:
+  title: Example API
+  version: "1.0"
+paths:
+  /stats:
+    get:
+      summary: Get statistics
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer

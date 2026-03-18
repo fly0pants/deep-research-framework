@@ -1,0 +1,4 @@
+preferred_language: zh-CN
+hints:
+  - "Use interactive charts for data-heavy results"
+  - "Use tables for comparisons"

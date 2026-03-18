@@ -1,0 +1,18 @@
+name: example
+description: "Example project for testing"
+
+apis:
+  - name: example_api
+    base_url: https://api.example.com/v1
+    auth:
+      type: bearer
+      token_env: EXAMPLE_API_KEY
+    docs_file: api_docs/example_api.yaml
+    prefetch:
+      - endpoint: /stats
+        params: { days: 30 }
+
+model: o3-deep-research
+
+system_instructions: |
+  You are a data analyst. Focus on key metrics and trends.
