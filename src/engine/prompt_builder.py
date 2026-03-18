@@ -6,6 +6,7 @@ def build_research_prompt(
     project_config: dict,
     context: str | None = None,
     output_prefs: dict | None = None,
+    user_memory: str | None = None,
 ) -> str:
     sections = []
 
@@ -13,6 +14,14 @@ def build_research_prompt(
 
 Project: {project_config['name']}
 Description: {project_config.get('description', '')}
+""")
+
+    if user_memory:
+        sections.append(f"""## User Profile
+
+The following is a learned profile of the current user based on their past interactions. Adapt your research depth, focus areas, terminology, and output style accordingly.
+
+{user_memory}
 """)
 
     if project_config.get("system_instructions"):
