@@ -368,7 +368,10 @@ async def run_research_task(task_id: str, req: ResearchRequest):
         }
         await task_manager.complete(task_id, result_data, usage_data)
 
-        # Async memory update (fire-and-forget, errors won't affect task)
+        if req.callback_url:
+            await _send_callback(req.callback_url, task_id, result_data)
+
+        # Memory update after callback — errors won't affect task
         if user_id:
             try:
                 from src.memory.updater import MemoryUpdater
@@ -384,9 +387,6 @@ async def run_research_task(task_id: str, req: ResearchRequest):
                     logger.info("user_memory_updated", user_id=user_id)
             except Exception as e:
                 logger.warning("user_memory_update_failed", user_id=user_id, error=str(e))
-
-        if req.callback_url:
-            await _send_callback(req.callback_url, task_id, result_data)
 
     except Exception as e:
         try:

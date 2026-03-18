@@ -12,6 +12,7 @@ class UserMemoryStore:
         self.db = await aiosqlite.connect(self.db_path)
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
+        await self.db.execute("PRAGMA busy_timeout=5000")
         await self.db.execute("""
             CREATE TABLE IF NOT EXISTS user_memories (
                 user_id TEXT PRIMARY KEY,
@@ -38,18 +39,13 @@ class UserMemoryStore:
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).isoformat()
-        existing = await self.get(user_id)
-        if existing is None:
-            await self.db.execute(
-                """INSERT INTO user_memories (user_id, memory, version, created_at, updated_at)
-                   VALUES (?, ?, 1, ?, ?)""",
-                (user_id, memory, now, now),
-            )
-        else:
-            await self.db.execute(
-                """UPDATE user_memories
-                   SET memory = ?, version = version + 1, updated_at = ?
-                   WHERE user_id = ?""",
-                (memory, now, user_id),
-            )
+        await self.db.execute(
+            """INSERT INTO user_memories (user_id, memory, version, created_at, updated_at)
+               VALUES (?, ?, 1, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   memory = excluded.memory,
+                   version = version + 1,
+                   updated_at = excluded.updated_at""",
+            (user_id, memory, now, now),
+        )
         await self.db.commit()
