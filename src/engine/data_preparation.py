@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
@@ -23,31 +25,111 @@ except ImportError:
     logger = _StructlogAdapter(__name__)
 
 
+def _build_auth_headers(auth: dict, runtime_api_key: str | None = None) -> dict:
+    """Build auth headers from auth config.
+
+    Uses *runtime_api_key* if provided, otherwise falls back to the
+    environment variable specified in the auth config.
+    """
+    headers = {}
+    token = runtime_api_key or os.environ.get(auth.get("token_env", ""), "")
+    if not token:
+        return headers
+    if auth.get("type") == "bearer":
+        headers["Authorization"] = f"Bearer {token}"
+    elif auth.get("type") == "header":
+        header_name = auth.get("header_name", "X-API-Key")
+        headers[header_name] = token
+    return headers
+
+
+def _strip_html_tags(obj):
+    """Recursively strip HTML tags from string values in dicts/lists."""
+    import re
+    if isinstance(obj, str):
+        return re.sub(r"<[^>]+>", "", obj)
+    if isinstance(obj, dict):
+        return {k: _strip_html_tags(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_html_tags(item) for item in obj]
+    return obj
+
+
 class DataPreparator:
-    def __init__(self, openai_client, temp_dir: Path | str = "/tmp/dr-data"):
+    def __init__(self, openai_client, temp_dir: Path | str = "/tmp/dr-data", runtime_api_key: str | None = None):
         self.client = openai_client
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime_api_key = runtime_api_key
+
+    async def call_api(
+        self,
+        api_config: dict,
+        endpoint: str,
+        method: str = "GET",
+        params: dict | None = None,
+        body: dict | None = None,
+    ) -> dict:
+        """Make a dynamic API call using the project's auth config. Returns result or error dict."""
+        base_url = api_config["base_url"].rstrip("/")
+        headers = _build_auth_headers(api_config.get("auth", {}), self.runtime_api_key)
+        url = f"{base_url}{endpoint}"
+        method = method.upper()
+        try:
+            async with httpx.AsyncClient(timeout=60, verify=False) as http:
+                for attempt in range(2):
+                    try:
+                        if method == "POST":
+                            resp = await http.post(url, json=body or {}, params=params, headers=headers)
+                        elif method == "PUT":
+                            resp = await http.put(url, json=body or {}, params=params, headers=headers)
+                        elif method == "DELETE":
+                            resp = await http.delete(url, params=params, headers=headers)
+                        else:
+                            resp = await http.get(url, params=params or {}, headers=headers)
+                        break
+                    except (httpx.ReadTimeout, httpx.ConnectTimeout) as te:
+                        if attempt == 0:
+                            logger.warning("api_call_retry", endpoint=endpoint, error=type(te).__name__)
+                            import asyncio
+                            await asyncio.sleep(2)
+                        else:
+                            raise
+                logger.info("api_call", endpoint=endpoint, method=method, status=resp.status_code)
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"raw": resp.text}
+                if not resp.is_success:
+                    return {
+                        "error": f"HTTP {resp.status_code}",
+                        "detail": data,
+                        "hint": f"Check the API documentation for the correct parameters. Method: {method}, Endpoint: {endpoint}",
+                    }
+                return {"data": _strip_html_tags(data)}
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            logger.warning("api_call_failed", endpoint=endpoint, method=method, error=error_msg, url=url)
+            return {"error": error_msg}
 
     async def prefetch(self, api_config: dict) -> list[dict]:
         """Execute prefetch API calls defined in project config."""
         results = []
         base_url = api_config["base_url"].rstrip("/")
-        auth = api_config.get("auth", {})
-        headers = {}
-
-        if auth.get("type") == "bearer":
-            token = os.environ.get(auth["token_env"], "")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
+        headers = _build_auth_headers(api_config.get("auth", {}), self.runtime_api_key)
 
         for pf in api_config.get("prefetch", []):
             endpoint = pf["endpoint"]
             params = pf.get("params", {})
+            body = pf.get("body")
+            method = pf.get("method", "GET").upper()
             url = f"{base_url}{endpoint}"
             try:
-                async with httpx.AsyncClient(timeout=30) as http:
-                    resp = await http.get(url, params=params, headers=headers)
+                async with httpx.AsyncClient(timeout=30, verify=False) as http:
+                    if method == "POST" and body:
+                        resp = await http.post(url, json=body, headers=headers)
+                    else:
+                        resp = await http.get(url, params=params, headers=headers)
                     resp.raise_for_status()
                     results.append({
                         "endpoint": endpoint,

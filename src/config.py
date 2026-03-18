@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     openai_api_key: str
     api_token: str
 
+    # OpenAI
+    openai_base_url: str | None = None  # Custom OpenAI API base URL
+
     # Service
     host: str = "0.0.0.0"
     port: int = 8000
@@ -21,7 +24,7 @@ class Settings(BaseSettings):
     max_concurrent_tasks: int = 5
     output_retention_days: int = 30
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings: Settings | None = None

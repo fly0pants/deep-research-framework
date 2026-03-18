@@ -41,3 +41,14 @@ class ProjectLoader:
         if not docs_path.exists():
             raise FileNotFoundError(f"API docs not found: {docs_path}")
         return docs_path.read_text()
+
+    def load_all_api_docs(self, project_name: str, docs_files: list) -> str:
+        """Load multiple API doc files and concatenate them."""
+        all_docs = []
+        for df in docs_files:
+            try:
+                content = self.load_api_docs(project_name, df)
+                all_docs.append(content)
+            except FileNotFoundError:
+                pass
+        return "\n\n---\n\n".join(all_docs)

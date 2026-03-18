@@ -5,7 +5,7 @@ import ipaddress
 import socket
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from src.auth import require_auth
@@ -61,6 +61,15 @@ async def submit_research(
     background_tasks: BackgroundTasks,
     _=Depends(require_auth),
 ):
+    if not req.api_key:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "api_key_required",
+                "message": "api_key is required. The caller must provide the user's API key.",
+            },
+        )
+
     try:
         project_loader.load(req.project)
     except FileNotFoundError:
@@ -96,7 +105,7 @@ async def submit_research(
 
 
 @router.get("/research/{task_id}")
-async def get_task(task_id: str, _=Depends(require_auth)):
+async def get_task(task_id: str, request: Request, _=Depends(require_auth)):
     task = await task_manager.get(task_id)
     if task is None:
         raise HTTPException(
@@ -114,8 +123,18 @@ async def get_task(task_id: str, _=Depends(require_auth)):
     if task.get("stage"):
         response["progress"] = {"stage": task["stage"], "message": task.get("message", "")}
 
+    if task["status"] == "failed" and task.get("message"):
+        response["error"] = {"message": task["message"]}
+
     if task["status"] == "completed" and task.get("result_data"):
-        response["output"] = task["result_data"]
+        result_data = task["result_data"]
+        # Build full URLs for files
+        base_url = str(request.base_url).rstrip("/")
+        if result_data.get("files"):
+            for f in result_data["files"]:
+                if f.get("url", "").startswith("/"):
+                    f["url"] = f"{base_url}{f['url']}"
+        response["output"] = result_data
         if task.get("usage_data"):
             response["usage"] = task["usage_data"]
 
@@ -135,7 +154,7 @@ async def cancel_task(task_id: str, _=Depends(require_auth)):
 
 
 @router.get("/files/{task_id}/{filename}")
-async def get_file(task_id: str, filename: str, _=Depends(require_auth)):
+async def get_file(task_id: str, filename: str):
     settings = get_settings()
     file_path = (settings.storage_path / task_id / filename).resolve()
     if not str(file_path).startswith(str(settings.storage_path.resolve())):
@@ -149,6 +168,42 @@ async def get_file(task_id: str, filename: str, _=Depends(require_auth)):
             detail={"code": "file_not_found", "message": "File not found"},
         )
     return FileResponse(file_path)
+
+
+@router.get("/incidents")
+async def list_incidents(_=Depends(require_auth)):
+    """List recent API incidents for monitoring."""
+    import json
+    from pathlib import Path
+
+    settings = get_settings()
+    log_file = settings.storage_path / "_incidents" / "api_incidents.jsonl"
+    if not log_file.exists():
+        return {"incidents": [], "total": 0}
+
+    incidents = []
+    with open(log_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    incidents.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+    # Return most recent 50
+    incidents = incidents[-50:]
+    incidents.reverse()
+    return {"incidents": incidents, "total": len(incidents)}
+
+
+def _extract_summary(text: str) -> str:
+    """Extract the SUMMARY comment tag from model output."""
+    match = re.search(r"<!--\s*SUMMARY:\s*\n?(.*?)-->", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # Fallback: no summary tag found
+    return ""
 
 
 def _parse_sources(text: str) -> list[dict]:
@@ -185,35 +240,38 @@ async def run_research_task(task_id: str, req: ResearchRequest):
         config = project_loader.load(req.project)
         output_prefs = project_loader.load_output_prefs(req.project)
 
-        openai_client = OpenAI(api_key=settings.openai_api_key)
-        preparator = DataPreparator(openai_client=openai_client)
-        vector_store_id = None
+        client_kwargs = {"api_key": settings.openai_api_key}
+        if settings.openai_base_url:
+            client_kwargs["base_url"] = settings.openai_base_url
+        openai_client = OpenAI(**client_kwargs)
+        preparator = DataPreparator(openai_client=openai_client, runtime_api_key=req.api_key)
 
+        # Collect business data and API docs
+        business_data_parts = []
         if config.get("apis"):
             await task_manager.update_status(
-                task_id,
-                "processing",
-                stage="preparing",
-                message="Fetching business data...",
+                task_id, "processing", stage="preparing", message="Fetching business data...",
             )
-            all_prefetch = []
-            all_docs = []
             for api_cfg in config["apis"]:
                 prefetch_results = await preparator.prefetch(api_cfg)
-                all_prefetch.extend(prefetch_results)
-                if api_cfg.get("docs_file"):
+                for pr in prefetch_results:
+                    import json as _json
+                    business_data_parts.append(
+                        f"### Endpoint: {pr['endpoint']}\n```json\n{_json.dumps(pr['data'], ensure_ascii=False, indent=2)}\n```"
+                    )
+                # Load API docs
+                if api_cfg.get("docs_files"):
+                    docs = project_loader.load_all_api_docs(req.project, api_cfg["docs_files"])
+                    if docs:
+                        business_data_parts.append(f"### API Documentation\n{docs}")
+                elif api_cfg.get("docs_file"):
                     try:
                         docs = project_loader.load_api_docs(req.project, api_cfg["docs_file"])
-                        all_docs.append(docs)
+                        business_data_parts.append(f"### API Documentation\n{docs}")
                     except FileNotFoundError:
                         pass
 
-            if all_prefetch or all_docs:
-                vector_store_id = await preparator.create_vector_store(
-                    task_id=task_id,
-                    prefetch_results=all_prefetch,
-                    api_docs_content="\n\n".join(all_docs) if all_docs else None,
-                )
+        business_data = "\n\n".join(business_data_parts) if business_data_parts else None
 
         prompt = build_research_prompt(
             query=req.query,
@@ -223,10 +281,7 @@ async def run_research_task(task_id: str, req: ResearchRequest):
         )
 
         await task_manager.update_status(
-            task_id,
-            "processing",
-            stage="researching",
-            message="Deep research in progress...",
+            task_id, "processing", stage="researching", message="Research in progress...",
         )
         engine = ResearchEngine(
             openai_client=openai_client, default_model=settings.default_model
@@ -234,18 +289,33 @@ async def run_research_task(task_id: str, req: ResearchRequest):
 
         async def on_progress(status):
             await task_manager.update_status(
-                task_id,
-                "processing",
-                stage="researching",
-                message=f"Research status: {status}",
+                task_id, "processing", stage="researching", message=f"Research status: {status}",
             )
 
         result = await engine.run_and_wait(
             prompt=prompt,
             model=config.get("model"),
-            vector_store_id=vector_store_id,
             on_progress=on_progress,
+            business_data=business_data,
+            api_configs=config.get("apis") or None,
+            preparator=preparator,
         )
+
+        if result["status"] == "data_unavailable":
+            error_msg = result.get("error", "数据服务不可用")
+            await task_manager.update_status(
+                task_id, "failed",
+                message=f"数据不足，无法生成报告：{error_msg}",
+            )
+            # Log API failure for technical monitoring
+            await _log_api_incident(
+                task_id=task_id,
+                project=req.project,
+                query=req.query,
+                error=error_msg,
+                api_stats=result.get("api_call_stats"),
+            )
+            return
 
         if result["status"] != "completed":
             await task_manager.update_status(
@@ -264,12 +334,11 @@ async def run_research_task(task_id: str, req: ResearchRequest):
         )
 
         elapsed = time.time() - start_time
+        summary = _extract_summary(result["output_text"])
         result_data = {
             "format": output["format"],
             "files": output["files"],
-            "summary": result["output_text"][:200] + "..."
-            if len(result["output_text"]) > 200
-            else result["output_text"],
+            "summary": summary,
             "sources": _parse_sources(result["output_text"]),
         }
         usage_data = {
@@ -278,9 +347,6 @@ async def run_research_task(task_id: str, req: ResearchRequest):
             "research_time_seconds": round(elapsed, 1),
         }
         await task_manager.complete(task_id, result_data, usage_data)
-
-        if vector_store_id:
-            await preparator.cleanup(vector_store_id)
 
         if req.callback_url:
             await _send_callback(req.callback_url, task_id, result_data)
@@ -297,6 +363,44 @@ async def run_research_task(task_id: str, req: ResearchRequest):
 
             logging.getLogger(__name__).error(f"research_task_failed: {task_id} - {e}")
         await task_manager.update_status(task_id, "failed", message=str(e))
+
+
+async def _log_api_incident(
+    task_id: str,
+    project: str,
+    query: str,
+    error: str,
+    api_stats: dict | None = None,
+):
+    """Log API failures to a JSON Lines file for monitoring."""
+    import json
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    settings = get_settings()
+    log_dir = settings.storage_path / "_incidents"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "api_incidents.jsonl"
+
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "task_id": task_id,
+        "project": project,
+        "query": query[:200],
+        "error": error,
+        "api_stats": api_stats,
+    }
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        logger.error(
+            "api_incident_logged",
+            task_id=task_id,
+            project=project,
+            error=error,
+        )
+    except Exception as e:
+        logger.error("incident_log_write_failed", error=str(e))
 
 
 async def _send_callback(url: str, task_id: str, result_data: dict):

@@ -1,0 +1,54 @@
+name: admapix
+description: "AdMapix 广告素材情报与市场分析平台 - 提供广告素材搜索、竞品投放分析、下载量收入追踪、排行榜等能力"
+
+apis:
+  - name: admapix_main
+    base_url: https://api.admapix.com
+    auth:
+      type: header
+      header_name: X-API-Key
+      token_env: ADMAPIX_API_KEY
+    docs_files:
+      - api_docs/api-creative.md
+      - api_docs/api-distribution.md
+      - api_docs/api-download-revenue.md
+      - api_docs/api-ranking.md
+      - api_docs/api-market.md
+      - api_docs/api-product.md
+      - api_docs/param-mappings.md
+    prefetch:
+      - endpoint: /api/data/generic-rank
+        method: POST
+        body:
+          rank_type: promotion
+          category_id: "6014"
+          date_type: 1
+          page: 1
+          page_size: 20
+      - endpoint: /api/data/filter-options
+        method: GET
+        params:
+          content_type: imagevideo
+
+model: gpt-5.4
+
+system_instructions: |
+  你是一名资深的移动游戏广告投放分析师。你熟悉各类广告渠道（Facebook、Google、TikTok、Unity等）和广告素材类型（视频、图片、试玩等）。
+
+  分析时请重点关注：
+  - 投放量级和趋势变化
+  - 素材类型偏好（视频/图片/试玩广告占比）
+  - 投放地区分布（重点市场 vs 新兴市场）
+  - 创意策略（素材风格、时长、尺寸等）
+  - 与竞品的对比分析
+
+  数据来源说明：
+  - AdMapix API 提供的数据为第三方估算数据，非官方数据
+  - 下载量和收入数据仅供参考
+  - 请在报告中适当标注数据来源的局限性
+
+  输出要求：
+  - 使用中文撰写报告
+  - 数据用图表展示（优先使用交互式图表）
+  - 关键发现用加粗标注
+  - 提供可操作的建议

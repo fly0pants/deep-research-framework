@@ -16,6 +16,7 @@ class ResearchRequest(BaseModel):
     query: str
     context: str | None = None
     callback_url: str | None = None
+    api_key: str | None = None
 
     @field_validator("callback_url")
     @classmethod
