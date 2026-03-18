@@ -57,17 +57,27 @@ async def test_projects_with_auth(client):
 async def test_submit_research_unknown_project(client):
     resp = await client.post(
         "/research",
-        json={"project": "nonexistent", "query": "test"},
+        json={"project": "nonexistent", "query": "test", "api_key": "test-key"},
         headers={"Authorization": "Bearer test-token"},
     )
     assert resp.status_code == 404
+
+
+async def test_submit_research_missing_api_key(client):
+    resp = await client.post(
+        "/research",
+        json={"project": "testproj", "query": "test"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "api_key_required"
 
 
 async def test_submit_research_success(client):
     with patch("src.api.routes.run_research_task") as mock_run:
         resp = await client.post(
             "/research",
-            json={"project": "testproj", "query": "analyze trends"},
+            json={"project": "testproj", "query": "analyze trends", "api_key": "test-key"},
             headers={"Authorization": "Bearer test-token"},
         )
     assert resp.status_code == 202
@@ -88,7 +98,7 @@ async def test_cancel_task(client):
     with patch("src.api.routes.run_research_task"):
         create_resp = await client.post(
             "/research",
-            json={"project": "testproj", "query": "test"},
+            json={"project": "testproj", "query": "test", "api_key": "test-key"},
             headers={"Authorization": "Bearer test-token"},
         )
     task_id = create_resp.json()["task_id"]
