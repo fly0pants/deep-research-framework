@@ -1,0 +1,25 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      - output_data:/data/output
+      - ./projects:/app/projects:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  renderer:
+    build:
+      context: .
+      dockerfile: Dockerfile.renderer
+    image: dr-renderer
+    profiles:
+      - build-only
+
+volumes:
+  output_data:
