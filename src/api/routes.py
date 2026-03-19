@@ -375,12 +375,20 @@ async def run_research_task(task_id: str, req: ResearchRequest):
         if user_id:
             try:
                 from src.memory.updater import MemoryUpdater
-                updater = MemoryUpdater(openai_client=openai_client)
                 memory_summary = summary or result["output_text"][:500]
+
+                # Store this interaction for future reference
+                await memory_store.add_interaction(user_id, req.query, memory_summary)
+
+                # Get recent history for richer profile generation
+                recent = await memory_store.get_recent_interactions(user_id)
+
+                updater = MemoryUpdater(openai_client=openai_client)
                 updated_memory = await updater.generate_updated_memory(
                     query=req.query,
                     summary=memory_summary,
                     existing_memory=user_memory,
+                    recent_interactions=recent,
                 )
                 if updated_memory:
                     await memory_store.upsert(user_id, updated_memory)

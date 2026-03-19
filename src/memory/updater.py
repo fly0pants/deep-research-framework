@@ -7,21 +7,23 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """你是一个用户画像分析器。根据用户的研究请求和报告摘要，生成或更新用户画像。
+SYSTEM_PROMPT = """你是一个用户画像分析器。根据用户的历史研究记录，生成或更新用户画像。
 
-画像应包含以下维度（仅输出有证据支持的维度，不要猜测）：
-- 语言偏好：中文/英文
-- 输出风格：详细/简洁/数据驱动
-- 专业程度：资深/中级/新手
-- 关注行业：游戏/电商/工具/社交等
-- 关注市场：国家/地区
-- 关注维度：素材/投放/下载/收入等
-- 关注产品：经常分析的产品或竞品
-- 角色定位：投放优化师/产品经理/市场研究等
-- 分析偏好：对比分析/趋势分析/单品深挖等
+你的任务：
+1. 分析用户的所有历史请求和报告摘要，发现有意义的模式
+2. 自行决定哪些维度值得记录——不限于任何预设维度
+3. 只记录有证据支持的特征，不要猜测
+4. 关注那些能帮助未来研究更好服务该用户的信息
 
-输出格式为 Markdown 列表，每行一个维度。只输出画像内容，不要输出任何解释。
-如果有已有画像，在其基础上更新和补充，不要丢弃已有信息（除非新信息明确矛盾）。"""
+可能有价值的方向（仅作参考，不必局限于此）：
+- 用户关注的行业、市场、产品
+- 用户的分析习惯和偏好
+- 用户的专业背景（从提问方式推断）
+- 任何你认为对个性化服务有帮助的模式
+
+输出格式为 Markdown 列表，每行一个特征。只输出画像内容，不要输出解释。
+如果有已有画像，在其基础上更新和补充，不要丢弃已有信息（除非新证据明确矛盾）。
+保持画像简洁，控制在15条以内。"""
 
 
 class MemoryUpdater:
@@ -34,15 +36,30 @@ class MemoryUpdater:
         query: str,
         summary: str,
         existing_memory: str | None,
+        recent_interactions: list[dict] | None = None,
     ) -> str:
-        parts = [f"## 本次研究请求\n{query}"]
+        parts = []
+
+        # Recent history gives LLM full context to discover patterns
+        if recent_interactions:
+            history_lines = []
+            for i, r in enumerate(recent_interactions, 1):
+                line = f"{i}. [{r.get('created_at', '')}] {r['query']}"
+                if r.get("summary"):
+                    line += f"\n   摘要: {r['summary'][:200]}"
+                history_lines.append(line)
+            parts.append(f"## 历史研究记录（最近{len(recent_interactions)}条）\n" + "\n".join(history_lines))
+
+        parts.append(f"## 本次研究请求\n{query}")
         if summary:
-            parts.append(f"## 报告摘要\n{summary}")
+            parts.append(f"## 本次报告摘要\n{summary}")
+
         if existing_memory:
             parts.append(f"## 已有用户画像\n{existing_memory}")
         else:
             parts.append("## 已有用户画像\n首次使用，无历史记录。")
-        parts.append("请输出更新后的完整用户画像：")
+
+        parts.append("请基于以上所有信息，输出更新后的完整用户画像：")
         return "\n\n".join(parts)
 
     async def generate_updated_memory(
@@ -50,10 +67,11 @@ class MemoryUpdater:
         query: str,
         summary: str,
         existing_memory: str | None,
+        recent_interactions: list[dict] | None = None,
     ) -> str:
         import asyncio
 
-        user_prompt = self._build_update_prompt(query, summary, existing_memory)
+        user_prompt = self._build_update_prompt(query, summary, existing_memory, recent_interactions)
         try:
             response = await asyncio.to_thread(
                 self.client.chat.completions.create,

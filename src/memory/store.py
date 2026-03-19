@@ -22,6 +22,15 @@ class UserMemoryStore:
                 updated_at TEXT NOT NULL
             )
         """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS user_interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                query TEXT NOT NULL,
+                summary TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
         await self.db.commit()
 
     async def close(self):
@@ -34,6 +43,24 @@ class UserMemoryStore:
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+    async def add_interaction(self, user_id: str, query: str, summary: str | None = None) -> None:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+        await self.db.execute(
+            "INSERT INTO user_interactions (user_id, query, summary, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, query, summary, now),
+        )
+        await self.db.commit()
+
+    async def get_recent_interactions(self, user_id: str, limit: int = 10) -> list[dict]:
+        cursor = await self.db.execute(
+            "SELECT query, summary, created_at FROM user_interactions WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in reversed(rows)]
 
     async def upsert(self, user_id: str, memory: str) -> None:
         from datetime import datetime, timezone

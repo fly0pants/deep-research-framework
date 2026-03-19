@@ -38,3 +38,19 @@ async def test_upsert_updates_timestamp(store):
     await store.upsert("user_abc", "second")
     r2 = await store.get("user_abc")
     assert r2["updated_at"] >= r1["updated_at"]
+
+
+async def test_add_and_get_interactions(store):
+    await store.add_interaction("user_abc", "分析Temu广告", "Temu东南亚为主")
+    await store.add_interaction("user_abc", "Royal Match竞品", "休闲游戏赛道")
+    await store.add_interaction("user_abc", "Shein投放策略", "欧美市场")
+    results = await store.get_recent_interactions("user_abc", limit=2)
+    assert len(results) == 2
+    # Should be chronological order (oldest first)
+    assert "Royal Match" in results[0]["query"]
+    assert "Shein" in results[1]["query"]
+
+
+async def test_get_interactions_empty(store):
+    results = await store.get_recent_interactions("unknown_user")
+    assert results == []
