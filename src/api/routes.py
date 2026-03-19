@@ -79,7 +79,7 @@ async def submit_research(
     _=Depends(require_auth),
     source: str | None = None,
 ):
-    # Coze sends source as query param; merge into request body if not already set
+    # Coze may send source as query param or body field
     if source and not req.source:
         req.source = source
     if not req.api_key:
