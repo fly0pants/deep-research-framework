@@ -77,7 +77,11 @@ async def submit_research(
     req: ResearchRequest,
     background_tasks: BackgroundTasks,
     _=Depends(require_auth),
+    source: str | None = None,
 ):
+    # Coze sends source as query param; merge into request body if not already set
+    if source and not req.source:
+        req.source = source
     if not req.api_key:
         raise HTTPException(
             status_code=422,
