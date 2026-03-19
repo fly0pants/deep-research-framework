@@ -1,9 +1,6 @@
 from __future__ import annotations
 import asyncio
 import re
-import ipaddress
-import socket
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -28,6 +25,15 @@ except ImportError:
     import logging
 
     logger = logging.getLogger(__name__)
+
+# Source-based callback configuration
+# Each source maps to a webhook endpoint that receives task completion notifications
+CALLBACKS = {
+    "coze": {
+        "url": "https://api.coze.cn/api/trigger/v1/webhook/biz_id/bot_platform/hook/1000000000659753730",
+        "headers": {"Authorization": "Bearer TiMwxcnt"},
+    },
+}
 
 router = APIRouter()
 
@@ -108,7 +114,7 @@ async def submit_research(
         project=req.project,
         query=req.query,
         context=req.context,
-        callback_url=req.callback_url,
+        source=req.source,
     )
 
     background_tasks.add_task(run_research_task, task["task_id"], req)
@@ -327,6 +333,8 @@ async def run_research_task(task_id: str, req: ResearchRequest):
                 task_id, "failed",
                 message=f"数据不足，无法生成报告：{error_msg}",
             )
+            if req.source:
+                await _send_source_callback(req.source, task_id, "failed")
             # Log API failure for technical monitoring
             await _log_api_incident(
                 task_id=task_id,
@@ -341,6 +349,8 @@ async def run_research_task(task_id: str, req: ResearchRequest):
             await task_manager.update_status(
                 task_id, "failed", message=f"Research failed: {result['status']}"
             )
+            if req.source:
+                await _send_source_callback(req.source, task_id, "failed")
             return
 
         await task_manager.update_status(
@@ -368,8 +378,8 @@ async def run_research_task(task_id: str, req: ResearchRequest):
         }
         await task_manager.complete(task_id, result_data, usage_data)
 
-        if req.callback_url:
-            await _send_callback(req.callback_url, task_id, result_data)
+        if req.source:
+            await _send_source_callback(req.source, task_id, "completed")
 
         # Memory update after callback — errors won't affect task
         if user_id:
@@ -408,6 +418,8 @@ async def run_research_task(task_id: str, req: ResearchRequest):
 
             logging.getLogger(__name__).error(f"research_task_failed: {task_id} - {e}")
         await task_manager.update_status(task_id, "failed", message=str(e))
+        if req.source:
+            await _send_source_callback(req.source, task_id, "failed")
 
 
 async def _log_api_incident(
@@ -448,18 +460,22 @@ async def _log_api_incident(
         logger.error("incident_log_write_failed", error=str(e))
 
 
-async def _send_callback(url: str, task_id: str, result_data: dict):
+async def _send_source_callback(source: str, task_id: str, status: str):
+    """Send webhook notification to the upstream system identified by source."""
     import httpx
 
+    callback_cfg = CALLBACKS.get(source)
+    if not callback_cfg:
+        logger.warning("unknown_callback_source", source=source, task_id=task_id)
+        return
+
     try:
-        hostname = urlparse(url).hostname
-        ip = socket.gethostbyname(hostname)
-        if ipaddress.ip_address(ip).is_private:
-            return
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
-                url,
-                json={"task_id": task_id, "status": "completed", "result": result_data},
+                callback_cfg["url"],
+                json={"task_id": task_id, "status": status},
+                headers=callback_cfg.get("headers", {}),
             )
-    except Exception:
-        pass
+        logger.info("source_callback_sent", source=source, task_id=task_id, status=status)
+    except Exception as e:
+        logger.warning("source_callback_failed", source=source, task_id=task_id, error=str(e))

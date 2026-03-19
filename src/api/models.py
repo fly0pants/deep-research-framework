@@ -15,17 +15,8 @@ class ResearchRequest(BaseModel):
     project: str
     query: str
     context: str | None = None
-    callback_url: str | None = None
+    source: str | None = None
     api_key: str | None = None
-
-    @field_validator("callback_url")
-    @classmethod
-    def validate_callback_url(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        if not v.startswith("https://"):
-            raise ValueError("callback_url must use HTTPS")
-        return v
 
 
 class ProgressInfo(BaseModel):

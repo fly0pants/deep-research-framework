@@ -21,7 +21,7 @@ class TaskManager:
                 project TEXT NOT NULL,
                 query TEXT NOT NULL,
                 context TEXT,
-                callback_url TEXT,
+                source TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
                 stage TEXT,
                 message TEXT,
@@ -42,14 +42,14 @@ class TaskManager:
         project: str,
         query: str,
         context: str | None = None,
-        callback_url: str | None = None,
+        source: str | None = None,
     ) -> dict:
         task_id = f"dr_{uuid.uuid4()}"
         now = datetime.now(timezone.utc).isoformat()
         await self.db.execute(
-            """INSERT INTO tasks (task_id, project, query, context, callback_url, status, created_at, updated_at)
+            """INSERT INTO tasks (task_id, project, query, context, source, status, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
-            (task_id, project, query, context, callback_url, now, now),
+            (task_id, project, query, context, source, now, now),
         )
         await self.db.commit()
         return {"task_id": task_id, "status": "pending", "project": project, "created_at": now}
