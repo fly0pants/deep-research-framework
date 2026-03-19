@@ -8,9 +8,10 @@
 Client → FastAPI → Background Task
                       ├── Project Config (YAML)
                       ├── Data Preparation (API prefetch + docs)
-                      ├── Prompt Builder (research prompt)
+                      ├── Prompt Builder (research prompt + user profile)
                       ├── Research Engine (OpenAI Deep Research)
-                      └── Output Renderer (HTML/PDF/Markdown)
+                      ├── Output Renderer (HTML/PDF/Markdown)
+                      └── User Memory (profile generation & personalization)
 ```
 
 **核心流程：**
@@ -20,6 +21,24 @@ Client → FastAPI → Background Task
 3. 构建研究 prompt，调用 OpenAI Deep Research API
 4. AI 在研究过程中可动态调用业务 API 获取更多数据
 5. 渲染输出为 HTML（含 ECharts 图表）、PDF 或 Markdown
+6. 记录用户交互历史，LLM 自动生成用户画像，后续研究更懂你
+
+## 用户记忆系统
+
+框架内置基于 LLM 的用户记忆系统，随着使用自动学习用户偏好，让每次研究报告更贴合你的需求。
+
+**工作原理：**
+
+- 以 `sha256(api_key)` 作为匿名用户标识，不存储原始 Key
+- 每次研究完成后，自动记录交互历史（查询 + 报告摘要）
+- LLM 分析历史交互，自主发现有价值的用户特征维度（不限于预设维度）
+- 用户画像注入研究 Prompt，让 AI 更了解你的关注点和偏好
+
+**自动发现的维度示例：**
+
+用户画像由 LLM 根据实际交互自由生成，可能包括但不限于：关注的行业/市场/产品、分析习惯、专业背景、偏好的报告风格等。
+
+**数据存储：** SQLite（WAL 模式），与任务数据共享同一数据库文件，零额外运维成本。
 
 ## 快速开始
 
@@ -133,7 +152,7 @@ system_instructions: |
 
 - **Python 3.12+** / FastAPI / Uvicorn
 - **OpenAI API** (Deep Research)
-- **SQLite** (aiosqlite) — 任务状态存储
+- **SQLite** (aiosqlite) — 任务状态 & 用户记忆存储
 - **httpx** — 异步 HTTP 请求
 - **Docker** — 部署 & 沙箱渲染
 
@@ -152,6 +171,9 @@ src/
 │   ├── prompt_builder.py    # 研究 Prompt 构建
 │   ├── data_preparation.py  # 数据预取 & API 调用
 │   └── research.py          # Deep Research 引擎
+├── memory/
+│   ├── store.py             # 用户记忆存储 (SQLite)
+│   └── updater.py           # LLM 驱动的用户画像生成
 ├── output/
 │   └── renderer.py          # 报告渲染 (HTML/PDF/MD)
 └── task/
