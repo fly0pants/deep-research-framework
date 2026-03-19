@@ -13,6 +13,8 @@ class TaskManager:
     async def init(self):
         self.db = await aiosqlite.connect(self.db_path)
         self.db.row_factory = aiosqlite.Row
+        await self.db.execute("PRAGMA journal_mode=WAL")
+        await self.db.execute("PRAGMA busy_timeout=5000")
         await self.db.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY,
