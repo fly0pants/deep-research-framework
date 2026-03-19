@@ -40,6 +40,11 @@ Search for unified products (cross-platform aggregated apps). This is the primar
 | sort_rule | string | "desc" | Sort direction |
 | unified_product_id | string | "" | Filter by specific unified product |
 | unified_developer_id | string | "" | Filter by specific developer |
+| country_ids | string[] | [] | Country filter (mapped to countryLevel2) |
+| media_ids | string[] | [] | Media channel filter |
+| device | string[] | [] | Device filter |
+
+**Note:** `country_ids`, `media_ids`, and `device` also apply to `product-search` and `company-search`.
 
 ### Response
 
@@ -217,7 +222,7 @@ Get comprehensive detail for a specific app/product.
 
 | Parameter | Type | Description |
 |---|---|---|
-| id | string | unified product ID (from unified-product-search) |
+| id | string | unified product ID (from unified-product-search), or a package name (e.g. `com.einnovation.temu`) — the API will auto-resolve package names to unified IDs |
 
 ### Response
 
@@ -315,6 +320,9 @@ Get individual products under a company (used in company search popover).
 | unified_id | string | required | Unified company ID |
 | page | int | 1 | Page number |
 | page_size | int | 10 | Results per page (1-100) |
+| trade_level3 | string[] | [] | Industry category filter |
+| device | string[] | [] | Device filter |
+| country_level2 | string[] | [] | Country filter |
 
 ---
 
@@ -405,6 +413,94 @@ Returns store information, audience demographics, category rankings, etc.
 
 ---
 
+## 10. Similar Apps — 相似/竞品应用
+
+`POST /api/data/similar-apps`
+
+Find apps with similar audiences or competitive overlap based on a package name.
+
+### Request Body
+
+```json
+{
+  "pkg": "com.einnovation.temu",
+  "sort_field": "7",
+  "sort_rule": "desc",
+  "trade_level3": [],
+  "device": [],
+  "country_level2": []
+}
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| pkg | string | required | App package name |
+| sort_field | string | "7" | Sort: "7"=ad days, "1"=similarity, "15"=impressions, "5"=creative count, "3"=first seen |
+| sort_rule | string | "desc" | Sort direction |
+| trade_level3 | string[] | [] | Industry category filter |
+| device | string[] | [] | Device filter |
+| country_level2 | string[] | [] | Country filter |
+
+### Response
+
+Returns normalized product list (same structure as `product-search` response), with an additional `similarity` field per item.
+
+---
+
+## 11. SDK Detail — SDK 集成详情
+
+`GET /api/data/sdk-detail?pkg={packageName}`
+
+Query which SDKs an app has integrated.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| pkg | string | required | App package name (e.g. `com.einnovation.temu`) |
+| sdk_type | string | "" | Optional SDK type filter |
+
+### Response
+
+Returns SDK integration details for the specified app. Returns `{}` if no data available.
+
+---
+
+## 12. Product Content Counts — 产品素材类型计数
+
+`POST /api/data/product-content-counts`
+
+Get the total creative count for a product across all 5 content types. Useful for showing a quick overview of a product's ad creative portfolio.
+
+### Request Body
+
+```json
+{
+  "unified_product_id": "com.einnovation.temu",
+  "start_date": "",
+  "end_date": ""
+}
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| product_ids | string[] | — | Product ID list (use this OR unified_product_id) |
+| unified_product_id | string | — | Unified product ID (use this OR product_ids) |
+| start_date | string | 365 days ago | YYYY-MM-DD |
+| end_date | string | today | YYYY-MM-DD |
+
+### Response
+
+```json
+{
+  "creative": 1234,
+  "imagevideo": 5678,
+  "preplay": 90,
+  "demoad": 345,
+  "document": 67
+}
+```
+
+---
+
 ## ⚠️ Common Pitfalls
 
 1. **HTML tags in names:** Both `unifiedProductName` and `unifiedCompanyName` may contain `<font color='red'>keyword</font>` HTML tags when returned from search endpoints. Always strip HTML before displaying.
@@ -427,3 +523,15 @@ Returns store information, audience demographics, category rankings, etc.
 1. **Search** → `company-search(keyword="ByteDance")` → get `unifiedCompanyId`
 2. **Detail** → `developer-detail(id=unifiedCompanyId)` → company info
 3. **Products** → `product-agg-list(unified_developer_id=id)` → all their apps
+
+### Finding competitors for an app
+
+1. **Search** → `unified-product-search(keyword="temu")` → get package name from `productIds`
+2. **Similar** → `similar-apps(pkg="com.einnovation.temu")` → competitor list
+3. **Enrich** → For each competitor, use `app-detail` or `product-content-counts` for deeper analysis
+
+### Quick app creative portfolio overview
+
+1. **Search** → `unified-product-search(keyword="temu")` → get `unifiedProductId`
+2. **Counts** → `product-content-counts(unified_product_id=id)` → counts per content type
+3. **Browse** → `product-content-search(unified_product_id=id, content_type="creative")` → actual creatives

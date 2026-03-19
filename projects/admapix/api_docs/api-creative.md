@@ -84,6 +84,7 @@ Search ad creatives across 5 content types. Supports H5 page generation.
 | media_ids | string[] | [] | Media channel IDs — use `ccode` from filter-options |
 | device | string[] | [] | Device filter — use `ccode` from filter-options |
 | trade_level1/2/3 | string[] | [] | Industry category filters (hierarchical) |
+| product_model | string[] | [] | Product model filter — use `ccode` from filter-options `productModel` (e.g. "1"=non-game, "2"=game) |
 | material_type | string | "" | Material format filter ("1"=image, "2"=video). **Only effective for `imagevideo` content type** — ignored by other content types |
 | ad_media_type | string[] | [] | Ad media type codes |
 | material_removal_repeat | bool | false | Deduplicate similar creatives |
@@ -270,7 +271,7 @@ Analyze distribution of specific creatives by dimension.
 | Parameter | Type | Description |
 |---|---|---|
 | content_type | string | Content type |
-| dimension | string | Distribution dimension |
+| dimension | string | Distribution dimension — use `advertiser` (not `adfaction`) |
 | ids | string[] | Creative IDs to analyze |
 | start_date/end_date | string | Date range |
 
@@ -278,11 +279,13 @@ Analyze distribution of specific creatives by dimension.
 
 | content_type | Dimensions |
 |---|---|
-| creative | media, adfaction, app |
-| imagevideo | media, adfaction, app, country |
-| preplay | media, adfaction, app |
-| demoad | media, adfaction, app |
-| document | media, adfaction, app |
+| creative | media, advertiser, app |
+| imagevideo | media, advertiser, app, country |
+| preplay | media, advertiser, app |
+| demoad | media, advertiser, app |
+| document | media, advertiser, app |
+
+**Note:** Use `advertiser` as the dimension name (the API internally maps it to `adfaction`).
 
 Use `GET /api/data/distribute-dims` to fetch this mapping dynamically.
 
@@ -352,14 +355,100 @@ Returns all filter enum options in a single batch call (13 categories).
 | country_ids | countries | "US", "JP", "MR" |
 | media_ids | mediaChannels | "101" (Adcolony) |
 | device | device | "1" (Android) |
-| trade_level1/2/3 | tradeLevel | "601" (Tools) |
+| trade_level1/2/3 | tradeLevel / tradeLevel2 | "601" (Tools), "60301" (E-commerce) |
+| product_model | productModel | "1" (Non-game), "2" (Game) |
 | ad_media_type | adTypes | "1076682150" (Native Ads) |
 | languages | languages | "af" (Afrikaans) |
 | material_tag | materialTag | "001" (AI) |
 
+### Additional Response Field: tradeLevelTree
+
+The response also includes `tradeLevelTree` — a hierarchical tree structure of all industry categories (level 1 → 2 → 3), useful for building category pickers or understanding the category hierarchy.
+
 ---
 
-## 6. Screen Types — 单类筛选项
+## 6. Content Detail — 素材详情
+
+`GET /api/data/content-detail`
+
+Get detailed information about a specific creative, or its related content (associated media, trends, profile, etc.).
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| content_type | string | required | creative, imagevideo, preplay, demoad, document |
+| id | string | required | Content ID |
+| related | string | (none) | Related data type (see below). Omit for base info. |
+| material_type | string | "" | Only for `related=imagevideo`: "1"=image, "2"=video |
+| start_date | string | 365 days ago | YYYY-MM-DD |
+| end_date | string | today | YYYY-MM-DD |
+
+### Related Types
+
+| related | Description |
+|---|---|
+| *(omitted)* | Base info — creative metadata and asset URLs |
+| `imagevideo` | Related image/video assets |
+| `document` | Related document assets |
+| `trend` | Impression/activity trend over time |
+| `profile` | Audience profile data |
+| `preplay` | Related playable ads |
+| `demoad` | Related landing pages |
+
+### Examples
+
+```
+# Get base info for a creative
+GET /api/data/content-detail?content_type=creative&id=abc123
+
+# Get related videos
+GET /api/data/content-detail?content_type=creative&id=abc123&related=imagevideo&material_type=2
+
+# Get trend data
+GET /api/data/content-detail?content_type=creative&id=abc123&related=trend&start_date=2026-01-01&end_date=2026-03-16
+```
+
+---
+
+## 7. Item Apps — 素材关联应用
+
+`POST /api/data/item-apps`
+
+Batch-fetch the associated apps for a list of creative IDs. Useful for enriching search results with app info.
+
+### Request Body
+
+```json
+{
+  "content_type": "creative",
+  "ids": ["id1", "id2", "id3"]
+}
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| content_type | string | Content type |
+| ids | string[] | Creative IDs (max 100) |
+
+### Response
+
+Returns a mapping of creative ID → app list:
+
+```json
+{
+  "id1": [
+    {"id": "com.example.app", "name": "App Name", "logo": "https://..."}
+  ],
+  "id2": [
+    {"id": "6498883328", "name": "Another App", "logo": "https://..."}
+  ]
+}
+```
+
+---
+
+## 8. Screen Types — 单类筛选项
 
 `GET /api/data/screen-types?element_type=1`
 
