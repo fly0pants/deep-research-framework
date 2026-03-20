@@ -23,6 +23,7 @@ def build_research_prompt(
     user_memory: str | None = None,
 ) -> str:
     sections = []
+    detected_lang = _detect_query_language(query)
 
     sections.append(f"""## Research Context
 
@@ -44,12 +45,19 @@ The following is a learned profile of the current user based on their past inter
 {project_config['system_instructions']}
 """)
 
-    sections.append("""## Data Source Labeling
+    _source_labels = {
+        "Chinese": {"experience": "行业经验", "insufficient": "原因说明"},
+        "Japanese": {"experience": "業界知見", "insufficient": "理由"},
+        "Korean": {"experience": "업계 경험", "insufficient": "사유"},
+    }
+    labels = _source_labels.get(detected_lang, {"experience": "Industry Experience", "insufficient": "reason"})
+
+    sections.append(f"""## Data Source Labeling
 
 In your report, label each piece of information with its source:
 - [API] — Data from project business APIs
 - [Web] — Data from web search or publicly known facts
-- [行业经验] — Your professional knowledge and industry experience (use when API data is unavailable but you can provide informed analysis)
+- [{labels['experience']}] — Your professional knowledge and industry experience (use when API data is unavailable but you can provide informed analysis)
 - [Computed] — Your own calculations or derivations based on the above data
 """)
 
@@ -82,28 +90,28 @@ Only generate the final report after collecting sufficient data. Never output a 
 - Common workflow: search (unified-product-search) → get ID → distribution/detail calls.
 """)
 
-    sections.append("""## Output Quality Gate
+    sections.append(f"""## Output Quality Gate
 
 **CRITICAL:** Your output is the FINAL deliverable shown directly to the end user. There is NO follow-up interaction — the user cannot provide additional information, answer your questions, or retry.
 
-**绝对禁止：**
-- 输出让用户补充信息、确认数据、或手动操作才能完成的报告
-- 输出带有空图表、"待补充"、"TBD"占位符的模板报告
-- 输出"如果给我XX数据，我可以做XX分析"之类的内容
+**Absolutely forbidden:**
+- Reports that ask the user to supplement info, confirm data, or perform manual steps to complete
+- Reports with empty charts, "TBD" placeholders, or "to be supplemented" sections
+- Responses like "if you provide XX data, I can do XX analysis"
 
-**数据降级策略（按优先级执行）：**
+**Data degradation strategy (by priority):**
 
-1. **数据充足** → 生成完整报告，所有模块都有真实数据支撑
-2. **部分数据缺失** → 采用以下补救措施：
-   - 直接删掉无法获取数据的模块/图表（不要留空壳）
-   - 如果某个维度的API数据拿不到，可以基于你的行业知识提供分析，但必须标注 [行业经验] 而非 [API]
-   - 保留能用的数据模块，确保报告整体仍有价值
-3. **数据严重不足** → 仅当以下情况同时满足时，输出失败标记：
-   - 目标产品/实体在API中完全找不到（搜索多次都无结果）
-   - 且无法从已有数据中推导出任何有意义的分析
-   - 此时输出 ONLY 这一行：`<!-- INSUFFICIENT_DATA: [原因说明] -->`
+1. **Data sufficient** → Generate a complete report with real data backing every section
+2. **Partial data missing** → Apply these remedies:
+   - Remove sections/charts where data is unavailable (do NOT leave empty shells)
+   - When API data for a dimension is unavailable, provide analysis based on your industry knowledge, but label it [{labels['experience']}] not [API]
+   - Keep usable data sections to ensure the report still delivers value
+3. **Severely insufficient data** → Output a failure marker ONLY when ALL of the following are true:
+   - The target product/entity cannot be found in API at all (multiple searches returned nothing)
+   - AND no meaningful analysis can be derived from available data
+   - In this case, output ONLY this line: `<!-- INSUFFICIENT_DATA: [{labels['insufficient']}] -->`
 
-**核心原则：有多少数据就做多少分析，宁可报告短一点也要保证每一段都有价值。**
+**Core principle: analyze with whatever data you have — a shorter report with real substance is better than a padded one.**
 """)
 
     format_section = """## Output Format Decision
@@ -152,7 +160,6 @@ Your response MUST include:
 
     sections.append(format_section)
 
-    detected_lang = _detect_query_language(query)
     sections.append(f"""## Language Rule (HIGHEST PRIORITY)
 
 **The user's query is written in: {detected_lang}**

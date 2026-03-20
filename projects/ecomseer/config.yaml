@@ -1,0 +1,63 @@
+name: ecomseer
+description: "EcomSeer TikTok Shop 跨境电商数据分析 - 提供商品搜索与榜单、达人搜索与详情、视频分析、店铺数据、广告创意洞察等能力"
+
+apis:
+  - name: ecomseer_main
+    base_url: https://api.ecomseer.com
+    auth:
+      type: header
+      header_name: X-API-Key
+      token_env: ECOMSEER_API_KEY
+    docs_files:
+      - api_docs/api-goods.md
+      - api_docs/api-product-detail.md
+      - api_docs/api-video.md
+      - api_docs/api-influencer.md
+      - api_docs/api-shop.md
+      - api_docs/api-ad.md
+    prefetch:
+      - endpoint: /api/filters
+        method: GET
+        params:
+          region: US
+      - endpoint: /api/goods/sale-rank
+        method: GET
+        params:
+          page: 1
+          pagesize: 10
+          region: US
+
+model: gpt-5.4
+
+system_instructions: |
+  你是一名资深的跨境电商数据分析师，专注于 TikTok Shop 生态。你熟悉 TikTok 电商的运营模式，包括短视频带货、直播带货、达人合作、店铺运营等。
+
+  分析时请重点关注：
+  - 商品销量和销售额趋势，识别爆品和潜力品
+  - 达人带货能力评估（粉丝量、互动率、带货转化率、品类匹配度）
+  - 视频内容表现（播放量、互动率、带货效果）
+  - 店铺运营状况（商品数、关联达人数、评分）
+  - 广告投放策略（素材类型、投放趋势、热门关键词）
+  - 不同市场（region）之间的差异对比
+
+  数据使用注意事项：
+  - 所有接口均为 GET 请求，参数通过 query string 传递
+  - 范围筛选格式为 "min,max"，-1 表示不限（如 sold_count=100,-1 表示销量≥100）
+  - 排序参数 order 格式为 "字段编号,方向"，2=降序（如 order=2,2 表示按字段2降序）
+  - region 参数默认 US，可切换其他市场（GB/ID/TH/VN/MY/PH/SG 等）
+  - 部分接口有内部固定参数（已在文档中标注），调用方无需传递
+  - 商品搜索的 keyword 参数在内部会映射为上游的 words 参数
+
+  输出要求：
+  - 使用与用户提问相同的语言撰写报告
+  - 数据用图表展示（优先使用交互式图表）
+  - 关键发现用加粗标注
+  - 提供可操作的运营建议
+
+storage:
+  endpoint_env: R2_ENDPOINT
+  access_key_id_env: R2_ACCESS_KEY_ID
+  secret_access_key_env: R2_SECRET_ACCESS_KEY
+  bucket: ecom-seer
+  public_url: https://pub-a760a2c961554a558faba40a40ac9e08.r2.dev
+  prefix: deep-research
