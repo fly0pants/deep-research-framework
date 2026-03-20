@@ -68,6 +68,16 @@ def _resolve_user_id(api_key: str | None = None, user_id: str | None = None) -> 
     return _hash_api_key(api_key)
 
 
+def _verify_internal_key(request: Request):
+    """Verify X-Internal-Key header for service-to-service calls."""
+    settings = get_settings()
+    if not settings.internal_api_key:
+        raise HTTPException(status_code=500, detail="Internal API key not configured")
+    key = request.headers.get("X-Internal-Key")
+    if key != settings.internal_api_key:
+        raise HTTPException(status_code=401, detail="Invalid internal API key")
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health():
     active = await task_manager.count_active() if task_manager else 0
@@ -136,9 +146,11 @@ async def submit_research(
 @router.post("/internal/research", status_code=202)
 async def submit_internal_research(
     req: InternalResearchRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
 ):
-    """Internal endpoint for website-initiated research. Uses server-side API key."""
+    """Internal endpoint for website-initiated research. Requires X-Internal-Key."""
+    _verify_internal_key(request)
     if not req.user_id:
         raise HTTPException(status_code=422, detail={
             "code": "user_id_required",
@@ -176,13 +188,69 @@ async def submit_internal_research(
         query=req.query,
         context=req.context,
         source=req.source or "admapix-website",
-        api_key=settings.internal_api_key,
+        api_key=None,  # let DataPreparator use ADMAPIX_API_KEY from env
     )
 
     background_tasks.add_task(
         run_research_task, task["task_id"], pipeline_req, req.user_id
     )
     return {"task_id": task["task_id"], "status": "pending", "created_at": task["created_at"]}
+
+
+@router.get("/internal/research/tasks")
+async def internal_list_tasks(request: Request):
+    """Internal endpoint to list all tasks with optional filters."""
+    _verify_internal_key(request)
+
+    params = request.query_params
+    page = max(1, int(params.get("page", 1)))
+    page_size = min(100, max(1, int(params.get("page_size", 20))))
+    source_filter = params.get("source")  # e.g. "admapix-website" or "api" (non-website)
+    offset = (page - 1) * page_size
+
+    tasks_list = await task_manager.list_all(
+        limit=page_size, offset=offset, source=source_filter
+    )
+    total = await task_manager.count_all(source=source_filter)
+    return {"tasks": tasks_list, "total": total, "page": page, "page_size": page_size}
+
+@router.get("/internal/research/{task_id}")
+async def internal_get_task(task_id: str, request: Request):
+    """Internal endpoint to get task status. Requires X-Internal-Key."""
+    _verify_internal_key(request)
+    task = await task_manager.get(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "task_not_found", "message": "Task not found"},
+        )
+
+    response = {
+        "task_id": task["task_id"],
+        "status": task["status"],
+        "created_at": task["created_at"],
+        "updated_at": task["updated_at"],
+    }
+
+    if task.get("stage"):
+        response["progress"] = {"stage": task["stage"], "message": task.get("message", "")}
+
+    if task["status"] == "failed" and task.get("message"):
+        response["error"] = {"message": task["message"]}
+
+    if task["status"] == "completed" and task.get("result_data"):
+        result_data = task["result_data"]
+        base_url = str(request.base_url).rstrip("/")
+        if result_data.get("files"):
+            for f in result_data["files"]:
+                if f.get("url", "").startswith("/"):
+                    f["url"] = f"{base_url}{f['url']}"
+        response["output"] = result_data
+        if task.get("usage_data"):
+            response["usage"] = task["usage_data"]
+
+    return response
+
 
 
 @router.get("/research/{task_id}")
@@ -435,6 +503,16 @@ async def run_research_task(task_id: str, req: ResearchRequest, user_id_override
             "summary": summary,
             "sources": _parse_sources(result["output_text"]),
         }
+
+        # Upload files to project's object storage if configured
+        storage_config = config.get("storage")
+        if storage_config:
+            from src.output.uploader import upload_report_files
+            task_dir = settings.storage_path / task_id
+            result_data["files"] = upload_report_files(
+                task_id, task_dir, result_data["files"], storage_config
+            )
+
         usage_data = {
             "model": config.get("model", settings.default_model),
             "total_tokens": result.get("total_tokens", 0),

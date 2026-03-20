@@ -48,7 +48,15 @@ system_instructions: |
   - 请在报告中适当标注数据来源的局限性
 
   输出要求：
-  - 使用中文撰写报告
+  - 使用与用户提问相同的语言撰写报告
   - 数据用图表展示（优先使用交互式图表）
   - 关键发现用加粗标注
   - 提供可操作的建议
+
+storage:
+  endpoint_env: R2_ENDPOINT
+  access_key_id_env: R2_ACCESS_KEY_ID
+  secret_access_key_env: R2_SECRET_ACCESS_KEY
+  bucket: admapix-media
+  public_url: https://pub-adf48a42024e40fea45150c01a16dbd0.r2.dev
+  prefix: deep-research

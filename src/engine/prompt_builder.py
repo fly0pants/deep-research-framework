@@ -1,5 +1,19 @@
 from __future__ import annotations
 
+def _detect_query_language(query: str) -> str:
+    """Simple heuristic: if >30% CJK chars, it's Chinese; otherwise English."""
+    cjk = sum(1 for c in query if '\u4e00' <= c <= '\u9fff')
+    if cjk / max(len(query), 1) > 0.3:
+        return "Chinese"
+    # Check for Japanese/Korean
+    jp = sum(1 for c in query if '\u3040' <= c <= '\u30ff' or '\u31f0' <= c <= '\u31ff')
+    kr = sum(1 for c in query if '\uac00' <= c <= '\ud7af')
+    if jp > 0:
+        return "Japanese"
+    if kr > 0:
+        return "Korean"
+    return "English"
+
 
 def build_research_prompt(
     query: str,
@@ -19,7 +33,7 @@ Description: {project_config.get('description', '')}
     if user_memory:
         sections.append(f"""## User Profile
 
-The following is a learned profile of the current user based on their past interactions. Adapt your research depth, focus areas, terminology, and output style accordingly.
+The following is a learned profile of the current user based on their past interactions. Adapt your research depth, focus areas, and terminology accordingly. NOTE: The language of this profile does NOT determine your output language — always follow the Language Rule section instead.
 
 {user_memory}
 """)
@@ -137,6 +151,20 @@ Your response MUST include:
                 format_section += f"- {hint}\n"
 
     sections.append(format_section)
+
+    detected_lang = _detect_query_language(query)
+    sections.append(f"""## Language Rule (HIGHEST PRIORITY)
+
+**The user's query is written in: {detected_lang}**
+
+You MUST write your ENTIRE response in **{detected_lang}**, including:
+- The report title, all headings, and body text
+- The SUMMARY tag content
+- Chart labels, legends, and axis titles
+- All analysis and recommendations
+
+This rule has the HIGHEST priority and overrides ALL other language instructions in this prompt, including any instructions in the Expert Instructions section above.
+""")
 
     sections.append(f"""## Research Task
 
