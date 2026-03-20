@@ -11,6 +11,7 @@ from src.api.models import (
     ProjectListResponse,
     ProjectInfo,
     ResearchRequest,
+    InternalResearchRequest,
 )
 from src.config import get_settings
 from src.engine.project_loader import ProjectLoader
@@ -58,6 +59,13 @@ def _hash_api_key(api_key: str | None) -> str | None:
         return None
     import hashlib
     return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+
+
+def _resolve_user_id(api_key: str | None = None, user_id: str | None = None) -> str | None:
+    """Resolve user identity: explicit user_id takes priority, else hash api_key."""
+    if user_id:
+        return user_id
+    return _hash_api_key(api_key)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -122,6 +130,58 @@ async def submit_research(
     )
 
     background_tasks.add_task(run_research_task, task["task_id"], req)
+    return {"task_id": task["task_id"], "status": "pending", "created_at": task["created_at"]}
+
+
+@router.post("/internal/research", status_code=202)
+async def submit_internal_research(
+    req: InternalResearchRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Internal endpoint for website-initiated research. Uses server-side API key."""
+    if not req.user_id:
+        raise HTTPException(status_code=422, detail={
+            "code": "user_id_required",
+            "message": "user_id is required for internal research requests.",
+        })
+
+    try:
+        project_loader.load(req.project)
+    except FileNotFoundError:
+        available = [p["name"] for p in project_loader.list_projects()]
+        raise HTTPException(status_code=404, detail={
+            "code": "project_not_found",
+            "message": f"Project '{req.project}' does not exist",
+            "details": {"available_projects": available},
+        })
+
+    active_count = await task_manager.count_active()
+    if active_count >= get_settings().max_concurrent_tasks:
+        raise HTTPException(status_code=429, detail={
+            "code": "too_many_requests",
+            "message": "Max concurrent tasks reached. Try again later.",
+        })
+
+    task = await task_manager.create(
+        project=req.project,
+        query=req.query,
+        context=req.context,
+        source=req.source or "admapix-website",
+    )
+
+    # Build a ResearchRequest for the existing pipeline, using internal key
+    settings = get_settings()
+    pipeline_req = ResearchRequest(
+        project=req.project,
+        query=req.query,
+        context=req.context,
+        source=req.source or "admapix-website",
+        api_key=settings.internal_api_key,
+    )
+
+    background_tasks.add_task(
+        run_research_task, task["task_id"], pipeline_req, req.user_id
+    )
     return {"task_id": task["task_id"], "status": "pending", "created_at": task["created_at"]}
 
 
@@ -240,7 +300,7 @@ def _parse_sources(text: str) -> list[dict]:
     return sources
 
 
-async def run_research_task(task_id: str, req: ResearchRequest):
+async def run_research_task(task_id: str, req: ResearchRequest, user_id_override: str | None = None):
     """Background task: runs the full research pipeline."""
     from openai import OpenAI
 
@@ -263,7 +323,7 @@ async def run_research_task(task_id: str, req: ResearchRequest):
 
         # Lookup user memory
         user_memory = None
-        user_id = _hash_api_key(req.api_key)
+        user_id = _resolve_user_id(api_key=req.api_key, user_id=user_id_override)
         if user_id:
             mem_record = await memory_store.get(user_id)
             if mem_record:

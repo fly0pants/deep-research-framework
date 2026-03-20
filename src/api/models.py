@@ -19,6 +19,14 @@ class ResearchRequest(BaseModel):
     api_key: str | None = None
 
 
+class InternalResearchRequest(BaseModel):
+    project: str
+    query: str
+    user_id: str
+    context: str | None = None
+    source: str | None = None
+
+
 class ProgressInfo(BaseModel):
     stage: str
     message: str

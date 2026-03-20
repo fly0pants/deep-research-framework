@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # Service
     host: str = "0.0.0.0"
     port: int = 8000
+    # Internal admapix API key for website-initiated research
+    internal_api_key: str | None = None
 
     # Paths
     storage_path: Path = Path("./output")
