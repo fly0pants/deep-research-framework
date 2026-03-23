@@ -7,7 +7,7 @@
 ## 1. 商品搜索
 
 ```
-GET /api/search
+GET /api/open/goods/search
 ```
 
 根据关键词、品类、价格、销量等多维度条件搜索 TikTok Shop 商品。上游接口：`/api/goods/V2/search`。
@@ -21,7 +21,7 @@ GET /api/search
 | `region` | str | 否 | US | 目标市场 |
 | `keyword` | str | 否 | - | 搜索关键词（内部映射为上游 `words` 参数） |
 | `order` | str | 否 | "2,2" | 排序规则 |
-| `l1_cid` | str | 否 | - | 一级品类 ID（通过 `/api/filters` 获取） |
+| `l1_cid` | str | 否 | - | 一级品类 ID（通过 `/api/open/goods/filters` 获取） |
 | `l2_cid` | str | 否 | - | 二级品类 ID |
 | `l3_cid` | str | 否 | - | 三级品类 ID |
 | `price_min` | str | 否 | - | 最低价格（美元）。与 `price_max` 组合后内部拼接为 `price_amount=min,max` |
@@ -49,7 +49,7 @@ GET /api/search
 ## 2. 商品筛选条件
 
 ```
-GET /api/filters
+GET /api/open/goods/filters
 ```
 
 获取商品搜索可用的筛选条件列表，包括品类树（一级/二级/三级品类 ID 和名称）、价格区间选项等。用于构建搜索筛选 UI 或获取品类 ID。上游接口：`/api/goods/filterInfo`。
@@ -65,7 +65,7 @@ GET /api/filters
 ## 3. 销量榜
 
 ```
-GET /api/goods/sale-rank
+GET /api/open/goods/sale-rank
 ```
 
 按销量排名的商品榜单。上游接口：`/api/goods/saleRank`。
@@ -87,7 +87,7 @@ GET /api/goods/sale-rank
 ## 4. 新品榜
 
 ```
-GET /api/goods/new-product
+GET /api/open/goods/new-product
 ```
 
 新上架商品排行榜。上游接口：`/api/goods/newProduct`。
@@ -111,7 +111,7 @@ GET /api/goods/new-product
 ## 5. 全托管商品榜
 
 ```
-GET /api/goods/managed-rank
+GET /api/open/goods/managed-rank
 ```
 
 TikTok Shop 全托管（sShop）模式下的热门商品排行。上游接口：`/api/goods/sShopHotList`。
@@ -133,7 +133,7 @@ TikTok Shop 全托管（sShop）模式下的热门商品排行。上游接口：
 ## 6. 热推榜
 
 ```
-GET /api/goods/hot-rank
+GET /api/open/goods/hot-rank
 ```
 
 被大量达人推广的热门商品排行。上游接口：`/api/goods/popRank`。

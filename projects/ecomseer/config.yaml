@@ -16,11 +16,11 @@ apis:
       - api_docs/api-shop.md
       - api_docs/api-ad.md
     prefetch:
-      - endpoint: /api/filters
+      - endpoint: /api/open/goods/filters
         method: GET
         params:
           region: US
-      - endpoint: /api/goods/sale-rank
+      - endpoint: /api/open/goods/sale-rank
         method: GET
         params:
           page: 1
@@ -46,7 +46,7 @@ system_instructions: |
   - 排序参数 order 格式为 "字段编号,方向"，2=降序（如 order=2,2 表示按字段2降序）
   - region 参数默认 US，可切换其他市场（GB/ID/TH/VN/MY/PH/SG 等）
   - 部分接口有内部固定参数（已在文档中标注），调用方无需传递
-  - 商品搜索的 keyword 参数在内部会映射为上游的 words 参数
+  - 所有接口路径以 /api/open/ 开头
 
   输出要求：
   - 使用与用户提问相同的语言撰写报告

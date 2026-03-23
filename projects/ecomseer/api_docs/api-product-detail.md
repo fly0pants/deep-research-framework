@@ -7,7 +7,7 @@
 ## 1. 商品基础信息
 
 ```
-GET /api/product/base
+GET /api/open/goods/detail
 ```
 
 获取单个商品的基础信息，包括标题、价格、图片、品类、店铺等。上游接口：`/api/goods/v3/base`。
@@ -24,7 +24,7 @@ GET /api/product/base
 ## 2. 销售趋势概览
 
 ```
-GET /api/product/overview
+GET /api/open/product/overview
 ```
 
 获取商品在指定时间范围内的销售趋势数据（销量、销售额、关联达人数等）。上游接口：`/api/goods/v3/overview`。
@@ -42,7 +42,7 @@ GET /api/product/overview
 ## 3. 带货视频列表
 
 ```
-GET /api/product/videos
+GET /api/open/product/videos
 ```
 
 获取推广该商品的视频列表。上游接口：`/api/goods/v3/video`。
@@ -65,7 +65,7 @@ GET /api/product/videos
 ## 4. 带货达人列表
 
 ```
-GET /api/product/authors
+GET /api/open/product/authors
 ```
 
 获取推广该商品的达人列表。上游接口：`/api/goods/v3/author`。
@@ -86,7 +86,7 @@ GET /api/product/authors
 ## 5. 商品评价
 
 ```
-GET /api/product/reviews
+GET /api/open/product/reviews
 ```
 
 获取商品的用户评价列表。上游接口：`/api/goods/reviewList`。
@@ -107,7 +107,7 @@ GET /api/product/reviews
 ## 6. 直播带货列表
 
 ```
-GET /api/product/live
+GET /api/open/product/live
 ```
 
 获取通过直播带货推广该商品的直播间列表。上游接口：`/api/goods/v3/live`。
