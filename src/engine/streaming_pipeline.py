@@ -479,16 +479,13 @@ class StreamingResearchPipeline:
                     chunks_collected.append(delta.content)
                     chunk_index += 1
 
-                    # Progress callback every 20 chunks
-                    if on_progress and chunk_index % 20 == 0:
-                        partial = "".join(chunks_collected)
-                        pct = min(95, round(len(partial) / 30000 * 100))
+                    if on_progress:
+                        pct = min(95, round(len("".join(chunks_collected)) / 30000 * 100))
                         prog = on_progress(
                             phase="generating",
                             stage="streaming",
-                            message=f"Generating report... ({len(partial)} chars)",
+                            chunk=delta.content,  # delta text for SSE streaming
                             progress_pct=pct,
-                            partial_content=partial,
                         )
                         if asyncio.iscoroutine(prog):
                             await prog

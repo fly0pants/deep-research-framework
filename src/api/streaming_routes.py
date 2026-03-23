@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json as _json
 import re
 import time
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from src.api.models import InternalResearchRequest
 from src.config import get_settings
@@ -26,6 +29,25 @@ streaming_router = APIRouter()
 task_manager: TaskManager | None = None
 project_loader: ProjectLoader | None = None
 memory_store: UserMemoryStore | None = None
+
+# ---------------------------------------------------------------------------
+# In-memory event queues for SSE streaming (task_id → Queue)
+# ---------------------------------------------------------------------------
+_event_queues: dict[str, asyncio.Queue] = {}
+
+
+def get_event_queue(task_id: str) -> asyncio.Queue | None:
+    return _event_queues.get(task_id)
+
+
+def create_event_queue(task_id: str) -> asyncio.Queue:
+    q: asyncio.Queue = asyncio.Queue()
+    _event_queues[task_id] = q
+    return q
+
+
+def remove_event_queue(task_id: str):
+    _event_queues.pop(task_id, None)
 
 
 def init_streaming_router(tm: TaskManager, pl: ProjectLoader, ms: UserMemoryStore):
@@ -65,6 +87,72 @@ def _parse_sources(text: str) -> list[dict]:
     if "[AdMapix]" in text or "[API]" in text:
         sources.append({"type": "api", "name": "project_data"})
     return sources
+
+
+@streaming_router.get("/research/{task_id}/stream")
+async def stream_research_progress(task_id: str):
+    """SSE endpoint for real-time streaming. Frontend connects directly."""
+    queue = get_event_queue(task_id)
+
+    # If no queue, task might be already done or not started
+    if queue is None:
+        # Check if task exists and is done
+        task = await task_manager.get(task_id) if task_manager else None
+        if task and task["status"] in ("completed", "failed"):
+            async def done_gen():
+                yield f"data: {_json.dumps({'type': 'complete', 'status': task['status']})}\n\n"
+            return StreamingResponse(done_gen(), media_type="text/event-stream", headers={
+                "Cache-Control": "no-cache", "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "X-Accel-Buffering": "no",
+            })
+        # Task not found or not started yet — wait a bit for queue to appear
+        for _ in range(30):  # wait up to 30 seconds
+            await asyncio.sleep(1)
+            queue = get_event_queue(task_id)
+            if queue:
+                break
+        if queue is None:
+            return StreamingResponse(
+                iter([f"data: {_json.dumps({'type': 'error', 'message': 'Task not found'})}\n\n"]),
+                media_type="text/event-stream",
+                headers={"Access-Control-Allow-Origin": "*"},
+            )
+
+    async def event_generator():
+        try:
+            while True:
+                event = await asyncio.wait_for(queue.get(), timeout=600)  # 10 min max
+                yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") in ("complete", "error", "failed"):
+                    break
+        except asyncio.TimeoutError:
+            yield f"data: {_json.dumps({'type': 'error', 'message': 'Stream timeout'})}\n\n"
+        finally:
+            remove_event_queue(task_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@streaming_router.options("/research/{task_id}/stream")
+async def stream_cors_preflight(task_id: str):
+    return StreamingResponse(
+        iter([""]),
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
 
 
 @streaming_router.post("/internal/research/streaming", status_code=202)
@@ -120,15 +208,20 @@ async def submit_internal_streaming_research(
         source=req.source or "admapix-website",
     )
 
+    # Create event queue for SSE streaming
+    event_queue = create_event_queue(task["task_id"])
+
     background_tasks.add_task(
-        run_streaming_research_task, task["task_id"], req
+        run_streaming_research_task, task["task_id"], req, event_queue
     )
     return {"task_id": task["task_id"], "status": "pending", "created_at": task["created_at"]}
 
 
-async def run_streaming_research_task(task_id: str, req: InternalResearchRequest):
+async def run_streaming_research_task(
+    task_id: str, req: InternalResearchRequest, event_queue: asyncio.Queue
+):
     """Background task: runs the streaming two-agent research pipeline."""
-    import json as _json
+    import json as _json_mod
 
     from openai import OpenAI
 
@@ -165,7 +258,7 @@ async def run_streaming_research_task(task_id: str, req: InternalResearchRequest
                 prefetch_results = await preparator.prefetch(api_cfg)
                 for pr in prefetch_results:
                     business_data_parts.append(
-                        f"### Endpoint: {pr['endpoint']}\n```json\n{_json.dumps(pr['data'], ensure_ascii=False, indent=2)}\n```"
+                        f"### Endpoint: {pr['endpoint']}\n```json\n{_json_mod.dumps(pr['data'], ensure_ascii=False, indent=2)}\n```"
                     )
                 # Load API docs
                 if api_cfg.get("docs_files"):
@@ -181,18 +274,34 @@ async def run_streaming_research_task(task_id: str, req: InternalResearchRequest
 
         business_data = "\n\n".join(business_data_parts) if business_data_parts else None
 
-        # Define progress callback
+        # Define progress callback — pushes to SSE queue + Supabase
         async def on_progress(
-            phase=None, stage=None, message=None, progress_pct=None, partial_content=None, **_
+            phase=None, stage=None, message=None, progress_pct=None,
+            partial_content=None, chunk=None, **_
         ):
+            if chunk is not None:
+                # Streaming chunk — push to SSE only, don't touch Supabase
+                event_queue.put_nowait({
+                    "type": "chunk",
+                    "content": chunk,
+                    "progress_pct": progress_pct,
+                })
+                return  # Don't update Supabase for every chunk
+
+            # Regular progress update — push to both SSE and Supabase
+            event = {
+                "type": "progress",
+                "phase": phase,
+                "stage": stage,
+                "message": message,
+                "progress_pct": progress_pct,
+            }
+            event_queue.put_nowait(event)
+
             await task_manager.update_status(
-                task_id,
-                "processing",
-                phase=phase,
-                stage=stage,
-                message=message,
+                task_id, "processing",
+                phase=phase, stage=stage, message=message,
                 progress_pct=progress_pct,
-                partial_content=partial_content,
             )
 
         await task_manager.update_status(
@@ -221,12 +330,23 @@ async def run_streaming_research_task(task_id: str, req: InternalResearchRequest
                 task_id, "failed",
                 message=f"数据不足，无法生成报告：{error_msg}",
             )
+            event_queue.put_nowait({
+                "type": "failed",
+                "status": "failed",
+                "message": f"数据不足，无法生成报告：{error_msg}",
+            })
             return
 
         if result["status"] != "completed":
+            error_msg = f"Research failed: {result.get('output_text', result['status'])}"
             await task_manager.update_status(
-                task_id, "failed", message=f"Research failed: {result.get('output_text', result['status'])}"
+                task_id, "failed", message=error_msg
             )
+            event_queue.put_nowait({
+                "type": "failed",
+                "status": "failed",
+                "message": error_msg,
+            })
             return
 
         await task_manager.update_status(
@@ -264,6 +384,15 @@ async def run_streaming_research_task(task_id: str, req: InternalResearchRequest
         }
         await task_manager.complete(task_id, result_data, usage_data)
 
+        # Push final completion event to SSE queue
+        event_queue.put_nowait({
+            "type": "complete",
+            "status": "completed",
+            "report_url": result_data["files"][0]["url"] if result_data.get("files") else None,
+            "summary": summary,
+            "usage_data": usage_data,
+        })
+
     except Exception as e:
         try:
             import structlog
@@ -276,3 +405,8 @@ async def run_streaming_research_task(task_id: str, req: InternalResearchRequest
 
             logging.getLogger(__name__).error(f"streaming_research_task_failed: {task_id} - {e}")
         await task_manager.update_status(task_id, "failed", message=str(e))
+        event_queue.put_nowait({
+            "type": "failed",
+            "status": "failed",
+            "message": str(e),
+        })
