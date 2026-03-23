@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from src.config import get_settings
 from src.api.routes import router, init_router
+from src.api.streaming_routes import streaming_router, init_streaming_router
 from src.engine.project_loader import ProjectLoader
 from src.memory.store import UserMemoryStore
 from src.task.manager import TaskManager
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
         await task_manager.init()
         await memory_store.init()
         init_router(task_manager, project_loader, semaphore, memory_store)
+        init_streaming_router(task_manager, project_loader, memory_store)
         yield
         await memory_store.close()
         await task_manager.close()
@@ -51,6 +53,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(router)
+    app.include_router(streaming_router)
     return app
 
 
